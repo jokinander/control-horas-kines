@@ -164,7 +164,7 @@ export default function App() {
   const exportResumen = () => {
     let text = `══════════════════════════════════\n`;
     text += `  RESUMEN ${MONTHS[month].toUpperCase()} ${year}\n`;
-    text += `  Grupo Agile — Kinesiología\n`;
+    text += `  Horas Agile VIP — Kinesiología\n`;
     text += `══════════════════════════════════\n\n`;
 
     KINES.forEach(k => {
