@@ -1,4 +1,8 @@
 import { useState, useEffect, useCallback } from "react";
+import { db } from "./firebase";
+import { doc, setDoc, onSnapshot } from "firebase/firestore";
+
+const DOC_REF = () => doc(db, "appData", "main");
 
 const DEFAULT_KINES = [
   { id: "salva", name: "Salva", color: "#2563eb" },
@@ -64,51 +68,54 @@ export default function App() {
   // Load from storage
   useEffect(() => {
     let done = false;
-    const timeout = setTimeout(() => { if (!done) { done = true; setLoading(false); } }, 2000);
-    (async () => {
-      try {
-        if (window.storage) {
-          let loadedKines = DEFAULT_KINES;
-          try {
-            const res = await window.storage.get(KINES_KEY);
-            if (res && res.value) { loadedKines = JSON.parse(res.value); setKines(loadedKines); }
-          } catch (e) {}
-          try {
-            const res = await window.storage.get(STORAGE_KEY);
-            if (res && res.value) {
-              const parsed = JSON.parse(res.value);
-              // Ensure all kines have data slots
-              loadedKines.forEach(k => {
-                if (!parsed[k.id]) {
-                  parsed[k.id] = {};
-                  MONTHS.forEach((_, mi) => { parsed[k.id][mi] = emptyMonthData(); });
-                } else {
-                  MONTHS.forEach((_, mi) => { if (!parsed[k.id][mi]) parsed[k.id][mi] = emptyMonthData(); });
-                }
-              });
-              setData(parsed);
-            }
-          } catch (e) {}
-          try {
-            const res = await window.storage.get(REPL_KEY);
-            if (res && res.value) setReplacements(JSON.parse(res.value));
-          } catch (e) {}
-        }
-      } catch (e) {}
-      if (!done) { done = true; clearTimeout(timeout); setLoading(false); }
-    })();
-    return () => clearTimeout(timeout);
+    const applyData = (d) => {
+      if (!d) return;
+      if (d.kines) setKines(d.kines);
+      if (d.data) {
+        const loadedKines = d.kines || DEFAULT_KINES;
+        const parsed = d.data;
+        loadedKines.forEach(k => {
+          if (!parsed[k.id]) {
+            parsed[k.id] = {};
+            MONTHS.forEach((_, mi) => { parsed[k.id][mi] = emptyMonthData(); });
+          } else {
+            MONTHS.forEach((_, mi) => { if (!parsed[k.id][mi]) parsed[k.id][mi] = emptyMonthData(); });
+          }
+        });
+        setData(parsed);
+      }
+      if (d.replacements) setReplacements(d.replacements);
+    };
+    // localStorage primero (instantaneo, respaldo)
+    try {
+      const ls = localStorage.getItem("agile-backup");
+      if (ls) applyData(JSON.parse(ls));
+    } catch (e) {}
+    setLoading(false);
+    // Firestore en vivo (fuente principal + sync)
+    const unsub = onSnapshot(DOC_REF(), (snap) => {
+      done = true;
+      if (snap.exists()) {
+        const d = snap.data();
+        applyData(d);
+        try { localStorage.setItem("agile-backup", JSON.stringify(d)); } catch (e) {}
+      }
+      setLoading(false);
+    }, (err) => { console.error("Firestore:", err); setLoading(false); });
+    return () => unsub();
   }, []);
 
   const save = useCallback(async (newData, newRepl, newKines) => {
     setSaving(true);
+    const payload = {
+      data: newData || data,
+      replacements: newRepl || replacements,
+      kines: newKines || kines,
+    };
+    try { localStorage.setItem("agile-backup", JSON.stringify(payload)); } catch (e) {}
     try {
-      if (window.storage) {
-        await window.storage.set(STORAGE_KEY, JSON.stringify(newData || data));
-        await window.storage.set(REPL_KEY, JSON.stringify(newRepl || replacements));
-        await window.storage.set(KINES_KEY, JSON.stringify(newKines || kines));
-      }
-    } catch (e) {}
+      await setDoc(DOC_REF(), payload);
+    } catch (e) { console.error("Error guardando en Firestore:", e); }
     setSaving(false);
   }, [data, replacements, kines]);
 
